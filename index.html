@@ -2,55 +2,48 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Target Analysis - Mobile Gold Build</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Target Analysis - Original Reversion</title>
     <script>
         var Module = { onRuntimeInitialized: function() { onOpenCvReady(); } };
     </script>
     <script async src="https://docs.opencv.org/4.8.0/opencv.js"></script>
     <style>
-        body { font-family: 'Segoe UI', sans-serif; background-color: #0a0a0a; color: white; margin: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
-        
-        /* Video area takes top 55% */
-        .viewport { position: relative; width: 100vw; height: 55vh; background: #000; overflow: hidden; flex-shrink: 0; }
-        video#webcam { width: 100%; height: 100%; object-fit: contain; transform: scaleX(-1); }
-        canvas.overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; transform: scaleX(-1); }
-        
-        /* Control area takes bottom 45% */
-        .ui-panel { flex: 1; display: flex; flex-direction: column; background: #161616; border-top: 2px solid #333; padding: 10px; overflow-y: auto; }
-        
-        .btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
-        button { background: #ff3b30; color: white; border: none; padding: 18px 5px; font-size: 14px; cursor: pointer; border-radius: 10px; font-weight: bold; }
-        button:disabled { background: #333; color: #777; }
-        
-        #status { font-weight: bold; font-size: 12px; color: #00ff00; text-align: center; margin-bottom: 8px; font-family: monospace; }
-        
-        .card { background: #222; border-radius: 8px; padding: 12px; border-left: 4px solid #ff3b30; margin-bottom: 10px; }
-        .card h4 { margin: 0 0 5px 0; color: #ffcc00; font-size: 13px; text-transform: uppercase; }
-        .mistake { display: flex; justify-content: space-between; border-bottom: 1px solid #333; padding: 4px 0; font-size: 12px; }
+        body { font-family: 'Segoe UI', sans-serif; background-color: #0a0a0a; color: white; margin: 0; display: flex; height: 100vh; overflow: hidden; }
+        .main { flex: 1; display: flex; flex-direction: column; align-items: center; padding: 20px; border-right: 2px solid #333; overflow-y: auto; }
+        .video-box { position: relative; width: 640px; height: 480px; border: 3px solid #444; border-radius: 12px; overflow: hidden; background: #000; flex-shrink: 0; }
+        video, canvas.overlay { position: absolute; width: 100%; height: 100%; top: 0; left: 0; }
+        canvas.overlay { pointer-events: none; z-index: 10; }
+        .sidebar { width: 400px; background: #161616; padding: 20px; overflow-y: auto; }
+        .card { background: #222; border-radius: 8px; padding: 15px; border-left: 4px solid #ff3b30; margin-bottom: 15px; animation: fadeIn 0.3s ease; }
+        .card h4 { margin: 0 0 10px 0; color: #ffcc00; font-size: 14px; text-transform: uppercase; }
+        .mistake { display: flex; justify-content: space-between; border-bottom: 1px solid #333; padding: 6px 0; font-size: 13px; }
         .prob { font-weight: bold; font-size: 11px; }
-
-        #debugCanvas { width: 100px; height: 75px; border: 1px solid #444; background: #000; display: block; margin: 0 auto; }
+        button { background: #ff3b30; color: white; border: none; padding: 12px 24px; font-size: 14px; cursor: pointer; border-radius: 6px; font-weight: bold; margin: 5px; }
+        #status { font-weight: bold; font-size: 14px; color: #00ff00; margin-bottom: 10px; }
+        .debug-view { width: 320px; height: 320px; border: 1px solid #444; background: #000; margin-top: 10px; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateX(15px); } to { opacity: 1; transform: translateX(0); } }
     </style>
 </head>
 <body>
 
-    <div class="viewport">
-        <video id="webcam" autoplay playsinline muted></video>
-        <canvas id="overlayCanvas" class="overlay"></canvas>
-    </div>
-
-    <div class="ui-panel">
-        <div id="status">WASM Loading...</div>
-        
-        <div class="btn-row">
+    <div class="main">
+        <h2 style="margin:0 0 10px 0;">Diagnostic Vision Engine</h2>
+        <p id="status">Loading WASM...</p>
+        <div class="video-box">
+            <video id="webcam" autoplay playsinline muted></video>
+            <canvas id="overlayCanvas" class="overlay" width="640" height="480"></canvas>
+        </div>
+        <div style="margin-top: 15px;">
+            <button id="btnCam" onclick="startCamera()">Start Camera</button>
             <button id="btnBase" onclick="setBaseline()" disabled>1. Lock Baseline</button>
             <button id="btnTrack" onclick="toggleTracking()" disabled>2. Start Session</button>
         </div>
+        <canvas id="debugCanvas" class="debug-view"></canvas>
+    </div>
 
-        <canvas id="debugCanvas"></canvas>
-
-        <h3 style="font-size: 14px; border-bottom: 1px solid #333; margin: 10px 0;">Diagnostic Feedback</h3>
+    <div class="sidebar">
+        <h3 style="border-bottom: 2px solid #333; padding-bottom: 10px;">Diagnostic Feedback</h3>
         <div id="shotList"></div>
     </div>
 
@@ -60,37 +53,27 @@
     let isTracking = false;
     let orb = null, matcher = null, refKP = null, refDesc = null, refGray = null;
     let cropSize = 0, targetRadius = 0, persistentShots = [], candidates = [], blacklist = [];
+    
     const PROXIMITY = 15.0, REQ_FRAMES = 5; 
 
     function onOpenCvReady() {
-        document.getElementById('status').innerText = "OpenCV Ready.";
+        document.getElementById('status').innerText = "OpenCV Ready. Tap Start Camera.";
+    }
+
+    function startCamera() {
+        // Updated for selfie-camera as you preferred, but keeps original 640x480 resolution
         navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: 640, height: 480 } })
             .then(s => { 
-                const v = document.getElementById('webcam');
-                v.srcObject = s; 
-                v.onloadedmetadata = () => {
-                    const ov = document.getElementById('overlayCanvas');
-                    ov.width = v.videoWidth;
-                    ov.height = v.videoHeight;
-                    document.getElementById('btnBase').disabled = false;
-                    document.getElementById('status').innerText = "Selfie Cam Active.";
-                };
+                document.getElementById('webcam').srcObject = s; 
+                document.getElementById('btnBase').disabled = false; 
+                document.getElementById('btnCam').style.display = 'none';
+                document.getElementById('status').innerText = "Camera Active.";
             });
     }
 
     function grab() {
         let cvs = document.getElementById('calcCanvas');
-        let ctx = cvs.getContext('2d');
-        let v = document.getElementById('webcam');
-        cvs.width = 640; cvs.height = 480;
-        
-        // Mirroring fix: OpenCV must see what you see
-        ctx.save();
-        ctx.translate(640, 0);
-        ctx.scale(-1, 1);
-        ctx.drawImage(v, 0, 0, 640, 480);
-        ctx.restore();
-        
+        cvs.getContext('2d').drawImage(document.getElementById('webcam'), 0,0,640,480);
         return cv.imread(cvs);
     }
 
@@ -109,16 +92,13 @@
         let best = null, maxA = 0;
         for(let i=0; i<contours.size(); i++) {
             let a = cv.contourArea(contours.get(i));
-            if(a > 2500 && a > maxA) { maxA = a; best = cv.minEnclosingCircle(contours.get(i)); }
+            if(a > 3000 && a > maxA) { maxA = a; best = cv.minEnclosingCircle(contours.get(i)); }
         }
         if(!best) { alert("Center target!"); frame.delete(); gray.delete(); thresh.delete(); return; }
 
         targetRadius = Math.round(best.radius);
         cropSize = targetRadius * 2 + 60;
-        let rect = new cv.Rect(Math.max(0, best.center.x - cropSize/2), Math.max(0, best.center.y - cropSize/2), 
-                               Math.min(640 - (best.center.x - cropSize/2), cropSize), 
-                               Math.min(480 - (best.center.y - cropSize/2), cropSize));
-        
+        let rect = new cv.Rect(Math.max(0, best.center.x - cropSize/2), Math.max(0, best.center.y - cropSize/2), cropSize, cropSize);
         let roi = frame.roi(rect);
         if(refGray) refGray.delete();
         refGray = new cv.Mat();
@@ -139,34 +119,44 @@
         if(!isTracking) return;
         let frame = grab();
         let grayLive = new cv.Mat(), liveKP = new cv.KeyPointVector(), liveDesc = new cv.Mat(), matches = new cv.DMatchVector();
+        
         try {
             cv.cvtColor(frame, grayLive, cv.COLOR_RGBA2GRAY);
             orb.detectAndCompute(grayLive, new cv.Mat(), liveKP, liveDesc);
+
             if(!liveDesc.empty()) {
                 matcher.match(refDesc, liveDesc, matches);
                 let good = [];
                 for(let i=0; i<matches.size(); i++) { if(matches.get(i).distance < 48) good.push(matches.get(i)); }
+                
                 if(good.length > 10) {
                     let srcP = [], dstP = [];
                     for(let m of good) { srcP.push(refKP.get(m.queryIdx).pt.x, refKP.get(m.queryIdx).pt.y); dstP.push(liveKP.get(m.trainIdx).pt.x, liveKP.get(m.trainIdx).pt.y); }
                     let matSrc = cv.matFromArray(good.length, 1, cv.CV_32FC2, srcP), matDst = cv.matFromArray(good.length, 1, cv.CV_32FC2, dstP);
                     let H = cv.findHomography(matSrc, matDst, cv.RANSAC, 5.0);
+
                     if(!H.empty()) {
                         let invH = new cv.Mat(); cv.invert(H, invH, cv.DECOMP_LU);
                         let warped = new cv.Mat(); cv.warpPerspective(grayLive, warped, invH, new cv.Size(refGray.cols, refGray.rows));
+                        
                         let refBlur = new cv.Mat(), warpedBlur = new cv.Mat();
                         cv.GaussianBlur(refGray, refBlur, new cv.Size(3, 3), 0);
                         cv.GaussianBlur(warped, warpedBlur, new cv.Size(3, 3), 0);
+
                         let diff = new cv.Mat(), thresh = new cv.Mat();
                         cv.absdiff(refBlur, warpedBlur, diff);
                         cv.threshold(diff, thresh, 40, 255, cv.THRESH_BINARY);
+
                         let liveMask = cv.Mat.zeros(refGray.rows, refGray.cols, cv.CV_8UC1);
                         cv.circle(liveMask, new cv.Point(refGray.cols/2, refGray.rows/2), targetRadius - 15, new cv.Scalar(255), -1);
                         let maskedThresh = new cv.Mat();
                         thresh.copyTo(maskedThresh, liveMask);
+
                         cv.imshow('debugCanvas', maskedThresh);
+
                         let contours = new cv.MatVector(), hier = new cv.Mat();
                         cv.findContours(maskedThresh, contours, hier, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+                        
                         let currentHoles = [];
                         for(let i=0; i<contours.size(); i++) {
                             let cnt = contours.get(i), area = cv.contourArea(cnt);
@@ -174,15 +164,18 @@
                                 let M = cv.moments(cnt);
                                 let p = {x: M.m10/M.m00, y: M.m01/M.m00};
                                 if(blacklist.some(b => Math.hypot(b.x-p.x, b.y-p.y) < PROXIMITY)) continue;
+
                                 let hull = new cv.Mat(); cv.convexHull(cnt, hull);
                                 let solidity = area / (cv.contourArea(hull) || 1);
                                 hull.delete();
+
                                 if(solidity > 0.86) currentHoles.push(p);
                                 else if(solidity < 0.75) blacklist.push(p); 
                             }
                         }
                         processShots(currentHoles);
                         drawOverlay(H);
+                        
                         invH.delete(); warped.delete(); diff.delete(); thresh.delete(); 
                         refBlur.delete(); warpedBlur.delete(); liveMask.delete(); maskedThresh.delete(); 
                         contours.delete(); hier.delete(); H.delete();
@@ -234,7 +227,7 @@
 
     function drawOverlay(H) {
         let ctx = document.getElementById('overlayCanvas').getContext('2d');
-        ctx.clearRect(0,0,ctx.canvas.width,ctx.canvas.height);
+        ctx.clearRect(0,0,640,480);
         persistentShots.forEach((s, idx) => {
             let p = cv.matFromArray(3, 1, cv.CV_64F, [s.x, s.y, 1.0]);
             let dP = new cv.Mat(); cv.gemm(H, p, 1, new cv.Mat(), 0, dP);
@@ -246,13 +239,7 @@
         });
     }
 
-    function toggleTracking() { 
-        isTracking = !isTracking; 
-        if(isTracking) {
-            document.getElementById('status').innerText = "Session Active.";
-            trackingLoop(); 
-        }
-    }
+    function toggleTracking() { isTracking = !isTracking; if(isTracking) trackingLoop(); }
 </script>
 </body>
 </html>
