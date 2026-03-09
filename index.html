@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Target Hub - High Contrast Lock</title>
+    <title>Target Hub - Force Lock Build</title>
     <script>
         var Module = { onRuntimeInitialized: function() { onOpenCvReady(); } };
     </script>
@@ -20,15 +20,14 @@
             padding: 10px; display: flex; flex-direction: column;
         }
 
-        .btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: auto; padding-bottom: 10px; }
-        button { padding: 18px; border: none; border-radius: 10px; background: #ff3b30; color: #fff; font-weight: bold; font-size: 14px; }
-        button:disabled { background: #333; color: #666; }
+        .btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: auto; padding-bottom: 15px; }
+        button { padding: 20px; border: none; border-radius: 12px; background: #ff3b30; color: #fff; font-weight: bold; font-size: 14px; box-shadow: 0 4px #900; }
+        button:active { background: #b00; transform: translateY(2px); }
+        button:disabled { background: #333; color: #666; box-shadow: none; }
 
-        #status { color: #00ff00; font-size: 11px; text-align: center; font-family: monospace; margin-bottom: 5px; }
-        #shotList { flex: 1; overflow-y: auto; font-size: 12px; background: #000; padding: 8px; border: 1px solid #333; margin-bottom: 5px; }
-        
-        /* Debug window placed inside the UI for easy viewing */
-        #debugCanvas { width: 100px; height: 75px; border: 1px solid #0f0; background: #000; margin: 0 auto 5px auto; display: block; }
+        #status { color: #00ff00; font-size: 12px; text-align: center; font-family: monospace; margin-bottom: 5px; min-height: 15px; }
+        #shotList { flex: 1; overflow-y: auto; font-size: 12px; background: #000; padding: 8px; border: 1px solid #333; margin-bottom: 5px; color: #aaa; }
+        #debugCanvas { width: 100px; height: 75px; border: 1px solid #444; background: #000; margin: 0 auto 5px auto; display: block; }
     </style>
 </head>
 <body>
@@ -39,9 +38,9 @@
     </div>
 
     <div class="bottom-ui">
-        <div id="status">INIT...</div>
+        <div id="status">INIT ENGINE...</div>
         <canvas id="debugCanvas"></canvas>
-        <div id="shotList">CONSOLE: SYSTEM IDLE</div>
+        <div id="shotList">SYSTEM LOG: Waiting for Baseline Lock...</div>
         <div class="btn-row">
             <button id="btnBase" onclick="setBaseline()" disabled>LOCK TARGET</button>
             <button id="btnTrack" onclick="toggleTracking()" disabled>START SESSION</button>
@@ -67,8 +66,10 @@
                 ov.width = v.videoWidth;
                 ov.height = v.videoHeight;
                 document.getElementById('btnBase').disabled = false;
-                document.getElementById('status').innerText = "CAMERA ACTIVE - CENTER TARGET";
+                document.getElementById('status').innerText = "CAMERA ACTIVE";
             };
+        }).catch(e => {
+            document.getElementById('status').innerText = "CAM ERROR: Check Permissions";
         });
     }
 
@@ -87,6 +88,7 @@
 
     function setBaseline() {
         try {
+            document.getElementById('status').innerText = "PROCESSING LOCK...";
             if(!orb) { 
                 orb = new cv.ORB(500);
                 matcher = new cv.BFMatcher(cv.NORM_HAMMING, true); 
@@ -97,21 +99,26 @@
             let gray = new cv.Mat(), thresh = new cv.Mat();
             cv.cvtColor(frame, gray, cv.COLOR_RGBA2GRAY);
             
-            // USE ADAPTIVE THRESHOLD TO FIND BLACK CIRCLE IN LOW LIGHT
-            cv.adaptiveThreshold(gray, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 15, 7);
+            // Contrast Boost for mobile sensors
+            cv.equalizeHist(gray, gray);
             
+            // Aggressive adaptive thresholding
+            cv.adaptiveThreshold(gray, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
+            cv.imshow('debugCanvas', thresh); // Visual check for user
+
             let contours = new cv.MatVector(), hierarchy = new cv.Mat();
             cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
             
             let best = null, maxA = 0;
             for(let i=0; i<contours.size(); i++) {
                 let a = cv.contourArea(contours.get(i));
-                // Smaller minimum area (400 instead of 1000) for far-away targets
-                if(a > 400 && a > maxA) { maxA = a; best = cv.minEnclosingCircle(contours.get(i)); }
+                // Very permissive area check for mobile (200 pixels)
+                if(a > 200 && a > maxA) { maxA = a; best = cv.minEnclosingCircle(contours.get(i)); }
             }
 
             if(!best) { 
-                document.getElementById('status').innerText = "LOCK FAILED - RE-CENTER";
+                document.getElementById('status').innerText = "FAILED: Target not found";
+                document.getElementById('status').style.color = "red";
                 frame.delete(); gray.delete(); thresh.delete(); contours.delete(); hierarchy.delete();
                 return; 
             }
@@ -125,12 +132,13 @@
             refGray = gray.roi(rect).clone();
             orb.detectAndCompute(refGray, new cv.Mat(), refKP, refDesc);
             
-            cv.imshow('debugCanvas', thresh); // Visualize what the computer sees
             document.getElementById('btnTrack').disabled = false;
-            document.getElementById('status').innerText = "TARGET ANCHORED";
+            document.getElementById('status').innerText = "LOCKED - START READY";
+            document.getElementById('status').style.color = "#00ff00";
+            document.getElementById('shotList').innerText = "LOG: Target Locked. Press Start.";
             
             frame.delete(); gray.delete(); thresh.delete(); contours.delete(); hierarchy.delete();
-        } catch(e) { document.getElementById('status').innerText = "MATH ERROR: " + e.message; }
+        } catch(e) { document.getElementById('status').innerText = "ERR: " + e.message; }
     }
 
     function trackingLoop() {
@@ -139,6 +147,7 @@
         let grayLive = new cv.Mat(), liveKP = new cv.KeyPointVector(), liveDesc = new cv.Mat(), matches = new cv.DMatchVector();
         try {
             cv.cvtColor(frame, grayLive, cv.COLOR_RGBA2GRAY);
+            cv.equalizeHist(grayLive, grayLive); // Keep contrast high for tracking
             orb.detectAndCompute(grayLive, new cv.Mat(), liveKP, liveDesc);
             if(!liveDesc.empty()) {
                 matcher.match(refDesc, liveDesc, matches);
@@ -185,7 +194,7 @@
                 c.f++; 
                 if(c.f >= 5) {
                     persistentShots.push({x:h.x, y:h.y});
-                    document.getElementById('shotList').innerText = "DETECTED SHOT #" + persistentShots.length;
+                    document.getElementById('shotList').innerText = "LOG: Shot Detected #" + persistentShots.length;
                     candidates = candidates.filter(can => can !== c);
                 }
             } else candidates.push({x:h.x, y:h.y, f:1});
@@ -206,7 +215,17 @@
         });
     }
 
-    function toggleTracking() { isTracking = !isTracking; if(isTracking) { trackingLoop(); document.getElementById('status').innerText = "LIVE SESSION"; } }
+    function toggleTracking() { 
+        isTracking = !isTracking; 
+        if(isTracking) { 
+            trackingLoop(); 
+            document.getElementById('status').innerText = "SESSION LIVE";
+            document.getElementById('btnTrack').innerText = "STOP SESSION";
+        } else {
+            document.getElementById('status').innerText = "SESSION PAUSED";
+            document.getElementById('btnTrack').innerText = "START SESSION";
+        }
+    }
 </script>
 </body>
 </html>
