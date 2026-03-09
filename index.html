@@ -3,34 +3,32 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Fixed UI Target Hub</title>
+    <title>Target Hub - High Contrast Lock</title>
     <script>
         var Module = { onRuntimeInitialized: function() { onOpenCvReady(); } };
     </script>
     <script async src="https://docs.opencv.org/4.8.0/opencv.js"></script>
     <style>
         body { margin: 0; padding: 0; background: #000; color: #fff; font-family: sans-serif; height: 100vh; width: 100vw; overflow: hidden; }
-        
-        /* 1. The Video stays in the background */
-        .video-box { position: absolute; top: 0; left: 0; width: 100%; height: 60%; background: #111; z-index: 1; }
+        .video-box { position: absolute; top: 0; left: 0; width: 100%; height: 55%; background: #111; z-index: 1; }
         video#webcam { width: 100%; height: 100%; object-fit: contain; transform: scaleX(-1); }
         canvas.overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; transform: scaleX(-1); }
 
-        /* 2. The UI is PINNED to the bottom 40% of the screen */
         .bottom-ui { 
-            position: fixed; bottom: 0; left: 0; width: 100%; height: 40%; 
-            background: rgba(30, 30, 30, 0.95); z-index: 999; 
-            border-top: 2px solid #ff3b30; padding: 15px; display: flex; flex-direction: column;
+            position: fixed; bottom: 0; left: 0; width: 100%; height: 45%; 
+            background: #1a1a1a; z-index: 999; border-top: 2px solid #ff3b30; 
+            padding: 10px; display: flex; flex-direction: column;
         }
 
-        .btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: auto; padding-bottom: 20px; }
-        button { padding: 20px; border: none; border-radius: 12px; background: #ff3b30; color: #fff; font-weight: bold; font-size: 14px; }
-        button:disabled { background: #444; color: #777; }
+        .btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: auto; padding-bottom: 10px; }
+        button { padding: 18px; border: none; border-radius: 10px; background: #ff3b30; color: #fff; font-weight: bold; font-size: 14px; }
+        button:disabled { background: #333; color: #666; }
 
-        #status { color: #00ff00; font-size: 11px; text-align: center; font-family: monospace; margin-bottom: 10px; }
-        #shotList { flex: 1; overflow-y: auto; font-size: 12px; border: 1px solid #333; padding: 10px; background: #000; margin-bottom: 10px; }
+        #status { color: #00ff00; font-size: 11px; text-align: center; font-family: monospace; margin-bottom: 5px; }
+        #shotList { flex: 1; overflow-y: auto; font-size: 12px; background: #000; padding: 8px; border: 1px solid #333; margin-bottom: 5px; }
         
-        #debugCanvas { width: 100px; height: 75px; position: absolute; top: -85px; right: 10px; border: 1px solid #555; background: #000; z-index: 1000; }
+        /* Debug window placed inside the UI for easy viewing */
+        #debugCanvas { width: 100px; height: 75px; border: 1px solid #0f0; background: #000; margin: 0 auto 5px auto; display: block; }
     </style>
 </head>
 <body>
@@ -41,12 +39,12 @@
     </div>
 
     <div class="bottom-ui">
+        <div id="status">INIT...</div>
         <canvas id="debugCanvas"></canvas>
-        <div id="status">INITIALIZING...</div>
-        <div id="shotList">CONSOLE: SYSTEM START</div>
+        <div id="shotList">CONSOLE: SYSTEM IDLE</div>
         <div class="btn-row">
-            <button id="btnBase" onclick="setBaseline()" disabled>LOCK</button>
-            <button id="btnTrack" onclick="toggleTracking()" disabled>START</button>
+            <button id="btnBase" onclick="setBaseline()" disabled>LOCK TARGET</button>
+            <button id="btnTrack" onclick="toggleTracking()" disabled>START SESSION</button>
         </div>
     </div>
 
@@ -59,9 +57,8 @@
     const MATH_SCALE = 0.5;
 
     function onOpenCvReady() {
-        // We use a lower "Ideal" resolution to prevent Android from freezing
         navigator.mediaDevices.getUserMedia({ 
-            video: { facingMode: "user", width: 320, height: 240 } 
+            video: { facingMode: "user", width: 640, height: 480 } 
         }).then(s => {
             const v = document.getElementById('webcam');
             v.srcObject = s;
@@ -70,7 +67,7 @@
                 ov.width = v.videoWidth;
                 ov.height = v.videoHeight;
                 document.getElementById('btnBase').disabled = false;
-                document.getElementById('status').innerText = "ONLINE - TARGET MUST BE STEADY";
+                document.getElementById('status').innerText = "CAMERA ACTIVE - CENTER TARGET";
             };
         });
     }
@@ -91,7 +88,7 @@
     function setBaseline() {
         try {
             if(!orb) { 
-                orb = new cv.ORB(500); // Very low count for zero-freeze
+                orb = new cv.ORB(500);
                 matcher = new cv.BFMatcher(cv.NORM_HAMMING, true); 
                 refKP = new cv.KeyPointVector(); 
                 refDesc = new cv.Mat(); 
@@ -99,7 +96,9 @@
             let frame = grab(MATH_SCALE); 
             let gray = new cv.Mat(), thresh = new cv.Mat();
             cv.cvtColor(frame, gray, cv.COLOR_RGBA2GRAY);
-            cv.threshold(gray, thresh, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
+            
+            // USE ADAPTIVE THRESHOLD TO FIND BLACK CIRCLE IN LOW LIGHT
+            cv.adaptiveThreshold(gray, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 15, 7);
             
             let contours = new cv.MatVector(), hierarchy = new cv.Mat();
             cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
@@ -107,24 +106,31 @@
             let best = null, maxA = 0;
             for(let i=0; i<contours.size(); i++) {
                 let a = cv.contourArea(contours.get(i));
-                if(a > 200 && a > maxA) { maxA = a; best = cv.minEnclosingCircle(contours.get(i)); }
+                // Smaller minimum area (400 instead of 1000) for far-away targets
+                if(a > 400 && a > maxA) { maxA = a; best = cv.minEnclosingCircle(contours.get(i)); }
             }
 
-            if(!best) { alert("Target not found!"); return; }
+            if(!best) { 
+                document.getElementById('status').innerText = "LOCK FAILED - RE-CENTER";
+                frame.delete(); gray.delete(); thresh.delete(); contours.delete(); hierarchy.delete();
+                return; 
+            }
             
             let radius = Math.round(best.radius);
-            let rect = new cv.Rect(Math.max(0, best.center.x - radius - 20), Math.max(0, best.center.y - radius - 20), (radius*2)+40, (radius*2)+40);
+            let rect = new cv.Rect(Math.max(0, best.center.x - radius - 20), Math.max(0, best.center.y - radius - 20), 
+                                   Math.min(frame.cols - (best.center.x - radius - 20), (radius*2)+40), 
+                                   Math.min(frame.rows - (best.center.y - radius - 20), (radius*2)+40));
             
             if(refGray) refGray.delete();
             refGray = gray.roi(rect).clone();
             orb.detectAndCompute(refGray, new cv.Mat(), refKP, refDesc);
             
-            document.getElementById('debugCanvas').width = refGray.cols;
-            document.getElementById('debugCanvas').height = refGray.rows;
+            cv.imshow('debugCanvas', thresh); // Visualize what the computer sees
             document.getElementById('btnTrack').disabled = false;
-            document.getElementById('status').innerText = "LOCKED";
+            document.getElementById('status').innerText = "TARGET ANCHORED";
+            
             frame.delete(); gray.delete(); thresh.delete(); contours.delete(); hierarchy.delete();
-        } catch(e) { console.error(e); }
+        } catch(e) { document.getElementById('status').innerText = "MATH ERROR: " + e.message; }
     }
 
     function trackingLoop() {
@@ -179,7 +185,7 @@
                 c.f++; 
                 if(c.f >= 5) {
                     persistentShots.push({x:h.x, y:h.y});
-                    document.getElementById('shotList').innerText = "SHOTS: " + persistentShots.length;
+                    document.getElementById('shotList').innerText = "DETECTED SHOT #" + persistentShots.length;
                     candidates = candidates.filter(can => can !== c);
                 }
             } else candidates.push({x:h.x, y:h.y, f:1});
@@ -195,13 +201,12 @@
             let dP = new cv.Mat(); cv.gemm(H, p, 1, new cv.Mat(), 0, dP);
             let x = (dP.data64F[0]/dP.data64F[2]) / MATH_SCALE;
             let y = (dP.data64F[1]/dP.data64F[2]) / MATH_SCALE;
-            ctx.beginPath(); ctx.arc(x, y, 15, 0, 6.28); 
-            ctx.fillStyle = "rgba(0,255,0,0.8)"; ctx.fill();
+            ctx.beginPath(); ctx.arc(x, y, 15, 0, 6.28); ctx.fillStyle = "rgba(0,255,0,0.8)"; ctx.fill();
             p.delete(); dP.delete();
         });
     }
 
-    function toggleTracking() { isTracking = !isTracking; if(isTracking) { trackingLoop(); document.getElementById('status').innerText = "LIVE"; } }
+    function toggleTracking() { isTracking = !isTracking; if(isTracking) { trackingLoop(); document.getElementById('status').innerText = "LIVE SESSION"; } }
 </script>
 </body>
 </html>
