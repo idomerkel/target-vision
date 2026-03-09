@@ -2,82 +2,82 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Precision Target Hub</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Target Analysis - Best Stable Engine</title>
     <script>
-        var Module = { onRuntimeInitialized: function() { 
-            document.getElementById('status').innerText = "Engine Online. Tap Start Camera.";
-        } };
+        var Module = { onRuntimeInitialized: function() { onOpenCvReady(); } };
     </script>
     <script async src="https://docs.opencv.org/4.8.0/opencv.js"></script>
     <style>
-        body { font-family: sans-serif; background: #0a0a0a; color: white; margin: 0; display: flex; flex-direction: column; height: 100vh; }
-        .view { flex: 1; position: relative; background: #000; display: flex; align-items: center; justify-content: center; overflow: hidden; }
-        video, canvas.overlay { position: absolute; width: 100%; height: 100%; top: 0; left: 0; object-fit: cover; }
+        body { font-family: 'Segoe UI', sans-serif; background-color: #0a0a0a; color: white; margin: 0; display: flex; height: 100vh; overflow: hidden; }
+        .main { flex: 1; display: flex; flex-direction: column; align-items: center; padding: 20px; border-right: 2px solid #333; }
+        .video-box { position: relative; width: 640px; height: 480px; border: 3px solid #444; border-radius: 12px; overflow: hidden; background: #000; }
+        video, canvas.overlay { position: absolute; width: 640px; height: 480px; top: 0; left: 0; }
         canvas.overlay { pointer-events: none; z-index: 10; }
-        .controls { background: #1a1a1a; padding: 15px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; border-top: 2px solid #333; }
-        button { padding: 18px; border: none; border-radius: 10px; background: #ff3b30; color: #fff; font-weight: bold; font-size: 14px; }
-        button:disabled { background: #333; color: #666; }
-        .full { grid-column: span 2; }
-        #status { background: #111; padding: 8px; font-size: 12px; color: #0f0; text-align: center; font-family: monospace; }
-        .sidebar { height: 150px; background: #111; overflow-y: auto; padding: 10px; border-top: 1px solid #444; }
-        .card { background: #222; padding: 10px; border-left: 4px solid #0f0; margin-bottom: 8px; font-size: 12px; }
-        #debugCanvas { width: 120px; height: 90px; border: 1px solid #444; position: absolute; bottom: 10px; right: 10px; z-index: 20; background: #000; }
+        .sidebar { width: 400px; background: #161616; padding: 20px; overflow-y: auto; }
+        .card { background: #222; border-radius: 8px; padding: 15px; border-left: 4px solid #ff3b30; margin-bottom: 15px; animation: fadeIn 0.3s ease; }
+        .card h4 { margin: 0 0 10px 0; color: #ffcc00; font-size: 14px; text-transform: uppercase; }
+        .mistake { display: flex; justify-content: space-between; border-bottom: 1px solid #333; padding: 6px 0; font-size: 13px; }
+        button { background: #ff3b30; color: white; border: none; padding: 12px 24px; font-size: 14px; cursor: pointer; border-radius: 6px; font-weight: bold; margin: 5px; }
+        #status { font-weight: bold; font-size: 14px; color: #00ff00; margin-bottom: 10px; }
+        .debug-view { width: 320px; height: 320px; border: 1px solid #444; background: #000; margin-top: 10px; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateX(15px); } to { opacity: 1; transform: translateX(0); } }
     </style>
 </head>
 <body>
 
-<div id="status">Loading OpenCV...</div>
+    <div class="main">
+        <h2 style="margin:0 0 10px 0;">Diagnostic Vision Engine</h2>
+        <p id="status">Loading WASM...</p>
+        <div class="video-box">
+            <video id="webcam" autoplay playsinline muted></video>
+            <canvas id="overlayCanvas" class="overlay" width="640" height="480"></canvas>
+        </div>
+        <div style="margin-top: 15px;">
+            <button id="btnBase" onclick="setBaseline()" disabled>1. Lock Baseline</button>
+            <button id="btnTrack" onclick="toggleTracking()" disabled>2. Start Session</button>
+        </div>
+        <canvas id="debugCanvas" class="debug-view"></canvas>
+    </div>
 
-<div class="view">
-    <video id="webcam" autoplay playsinline muted></video>
-    <canvas id="overlayCanvas" class="overlay"></canvas>
-    <canvas id="debugCanvas"></canvas>
-</div>
+    <div class="sidebar">
+        <h3 style="border-bottom: 2px solid #333; padding-bottom: 10px;">Diagnostic Feedback</h3>
+        <div id="shotList"></div>
+    </div>
 
-<div class="sidebar">
-    <div id="shotList"><p style="color:#555">Waiting for detection...</p></div>
-</div>
-
-<div class="controls">
-    <button id="btnCam" class="full" onclick="startMobileCamera()">START CAMERA</button>
-    <button id="btnBase" onclick="setBaseline()" disabled>1. LOCK TARGET</button>
-    <button id="btnTrack" onclick="toggleTracking()" disabled>2. START SESSION</button>
-</div>
-
-<canvas id="calcCanvas" style="display:none;"></canvas>
+    <canvas id="calcCanvas" width="640" height="480" style="display:none;"></canvas>
 
 <script>
     let isTracking = false;
     let orb = null, matcher = null, refKP = null, refDesc = null, refGray = null;
-    let persistentShots = [], candidates = [], blacklist = [];
-    const PROXIMITY = 15.0, REQ_FRAMES = 4;
+    let cropSize = 0, targetRadius = 0, persistentShots = [], candidates = [], blacklist = [];
+    const PROXIMITY = 15.0, REQ_FRAMES = 5; 
 
-    async function startMobileCamera() {
-        const constraints = {
-            video: { facingMode: "environment", width: { ideal: 640 }, height: { ideal: 480 } }
-        };
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia(constraints);
-            const video = document.getElementById('webcam');
-            video.srcObject = stream;
-            video.onloadedmetadata = () => {
-                const ov = document.getElementById('overlayCanvas');
-                ov.width = video.videoWidth; ov.height = video.videoHeight;
-                document.getElementById('btnBase').disabled = false;
-                document.getElementById('btnCam').style.display = 'none';
-                document.getElementById('status').innerText = "Camera Active. Align Target.";
-            };
-        } catch (e) {
-            document.getElementById('status').innerText = "Error: " + e.message;
-        }
+    function onOpenCvReady() {
+        document.getElementById('status').innerText = "OpenCV Ready.";
+        const isMobile = /Android|iPhone|iPad/i.test(navigator.userAgent);
+        
+        // Android-friendly camera request
+        navigator.mediaDevices.getUserMedia({ 
+            video: { 
+                width: 640, 
+                height: 480,
+                facingMode: isMobile ? "environment" : "user" 
+            } 
+        })
+        .then(s => { 
+            document.getElementById('webcam').srcObject = s; 
+            document.getElementById('btnBase').disabled = false; 
+        })
+        .catch(err => {
+            document.getElementById('status').innerText = "Camera Error: " + err.message;
+            document.getElementById('status').style.color = "red";
+        });
     }
 
     function grab() {
         let cvs = document.getElementById('calcCanvas');
-        let video = document.getElementById('webcam');
-        cvs.width = video.videoWidth; cvs.height = video.videoHeight;
-        cvs.getContext('2d').drawImage(video, 0, 0);
+        cvs.getContext('2d').drawImage(document.getElementById('webcam'), 0,0,640,480);
         return cv.imread(cvs);
     }
 
@@ -96,28 +96,26 @@
         let best = null, maxA = 0;
         for(let i=0; i<contours.size(); i++) {
             let a = cv.contourArea(contours.get(i));
-            if(a > 2000 && a > maxA) { maxA = a; best = cv.minEnclosingCircle(contours.get(i)); }
+            if(a > 3000 && a > maxA) { maxA = a; best = cv.minEnclosingCircle(contours.get(i)); }
         }
+        if(!best) { alert("Center target!"); frame.delete(); gray.delete(); thresh.delete(); return; }
 
-        if(!best) { alert("Target not detected!"); frame.delete(); gray.delete(); thresh.delete(); return; }
-
-        let radius = Math.round(best.radius);
-        let crop = radius * 2 + 60;
-        let rect = new cv.Rect(Math.max(0, best.center.x - crop/2), Math.max(0, best.center.y - crop/2), 
-                               Math.min(frame.cols - (best.center.x - crop/2), crop), 
-                               Math.min(frame.rows - (best.center.y - crop/2), crop));
-        
+        targetRadius = Math.round(best.radius);
+        cropSize = targetRadius * 2 + 60;
+        let rect = new cv.Rect(Math.max(0, best.center.x - cropSize/2), Math.max(0, best.center.y - cropSize/2), cropSize, cropSize);
         let roi = frame.roi(rect);
         if(refGray) refGray.delete();
         refGray = new cv.Mat();
         cv.cvtColor(roi, refGray, cv.COLOR_RGBA2GRAY);
         
         let mask = cv.Mat.zeros(roi.rows, roi.cols, cv.CV_8UC1);
-        cv.circle(mask, new cv.Point(roi.cols/2, roi.rows/2), radius - 10, new cv.Scalar(255), -1);
+        cv.circle(mask, new cv.Point(roi.cols/2, roi.rows/2), targetRadius - 10, new cv.Scalar(255), -1);
         orb.detectAndCompute(refGray, mask, refKP, refDesc);
 
+        document.getElementById('debugCanvas').width = roi.cols;
+        document.getElementById('debugCanvas').height = roi.rows;
         document.getElementById('btnTrack').disabled = false;
-        document.getElementById('status').innerText = "Baseline Locked. Press Start Session.";
+        document.getElementById('status').innerText = "Baseline Locked.";
         frame.delete(); gray.delete(); thresh.delete(); contours.delete(); hierarchy.delete(); mask.delete(); roi.delete();
     }
 
@@ -137,12 +135,8 @@
                 
                 if(good.length > 10) {
                     let srcP = [], dstP = [];
-                    for(let m of good) { 
-                        srcP.push(refKP.get(m.queryIdx).pt.x, refKP.get(m.queryIdx).pt.y); 
-                        dstP.push(liveKP.get(m.trainIdx).pt.x, liveKP.get(m.trainIdx).pt.y); 
-                    }
-                    let matSrc = cv.matFromArray(good.length, 1, cv.CV_32FC2, srcP);
-                    let matDst = cv.matFromArray(good.length, 1, cv.CV_32FC2, dstP);
+                    for(let m of good) { srcP.push(refKP.get(m.queryIdx).pt.x, refKP.get(m.queryIdx).pt.y); dstP.push(liveKP.get(m.trainIdx).pt.x, liveKP.get(m.trainIdx).pt.y); }
+                    let matSrc = cv.matFromArray(good.length, 1, cv.CV_32FC2, srcP), matDst = cv.matFromArray(good.length, 1, cv.CV_32FC2, dstP);
                     let H = cv.findHomography(matSrc, matDst, cv.RANSAC, 5.0);
 
                     if(!H.empty()) {
@@ -150,16 +144,22 @@
                         let warped = new cv.Mat(); cv.warpPerspective(grayLive, warped, invH, new cv.Size(refGray.cols, refGray.rows));
                         
                         let refBlur = new cv.Mat(), warpedBlur = new cv.Mat();
-                        cv.GaussianBlur(refGray, refBlur, new cv.Size(3,3), 0);
-                        cv.GaussianBlur(warped, warpedBlur, new cv.Size(3,3), 0);
+                        cv.GaussianBlur(refGray, refBlur, new cv.Size(3, 3), 0);
+                        cv.GaussianBlur(warped, warpedBlur, new cv.Size(3, 3), 0);
 
                         let diff = new cv.Mat(), thresh = new cv.Mat();
                         cv.absdiff(refBlur, warpedBlur, diff);
                         cv.threshold(diff, thresh, 40, 255, cv.THRESH_BINARY);
-                        cv.imshow('debugCanvas', thresh);
+
+                        let liveMask = cv.Mat.zeros(refGray.rows, refGray.cols, cv.CV_8UC1);
+                        cv.circle(liveMask, new cv.Point(refGray.cols/2, refGray.rows/2), targetRadius - 15, new cv.Scalar(255), -1);
+                        let maskedThresh = new cv.Mat();
+                        thresh.copyTo(maskedThresh, liveMask);
+
+                        cv.imshow('debugCanvas', maskedThresh);
 
                         let contours = new cv.MatVector(), hier = new cv.Mat();
-                        cv.findContours(thresh, contours, hier, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+                        cv.findContours(maskedThresh, contours, hier, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
                         
                         let currentHoles = [];
                         for(let i=0; i<contours.size(); i++) {
@@ -172,14 +172,15 @@
                                 let solidity = area / (cv.contourArea(hull) || 1);
                                 hull.delete();
                                 if(solidity > 0.86) currentHoles.push(p);
-                                else if(solidity < 0.75) blacklist.push(p);
+                                else if(solidity < 0.75) blacklist.push(p); 
                             }
                         }
                         processShots(currentHoles);
                         drawOverlay(H);
                         
                         invH.delete(); warped.delete(); diff.delete(); thresh.delete(); 
-                        refBlur.delete(); warpedBlur.delete(); contours.delete(); hier.delete(); H.delete();
+                        refBlur.delete(); warpedBlur.delete(); liveMask.delete(); maskedThresh.delete(); 
+                        contours.delete(); hier.delete(); H.delete();
                     }
                     matSrc.delete(); matDst.delete();
                 }
@@ -197,35 +198,50 @@
             if(c) { 
                 c.f++; 
                 if(c.f >= REQ_FRAMES) {
-                    persistentShots.push({id: Date.now(), x:h.x, y:h.y});
+                    persistentShots.push({id: Date.now(), x:h.x, y:h.y, d: getDiag(h.x, h.y)});
                     refreshList();
                     candidates = candidates.filter(can => can !== c);
                 }
             } else candidates.push({x:h.x, y:h.y, f:1});
         }
+        candidates.forEach(c => { c.f -= 0.1; });
+        candidates = candidates.filter(c => c.f > 0);
+    }
+
+    function getDiag(x, y) {
+        let dx = x - refGray.cols/2, dy = refGray.rows/2 - y;
+        let a = Math.atan2(dy, dx) * (180/Math.PI); if(a < 0) a += 360;
+        if(a > 45 && a <= 135) return {z:"High", m:[{n:"Riding Recoil", p:"High"},{n:"Heeling", p:"Med"},{n:"Breathing", p:"Low"}]};
+        if(a > 135 && a <= 225) return {z:"Left", m:[{n:"Trigger Depth", p:"High"},{n:"Grip Tension", p:"Med"},{n:"Wrist Roll", p:"Low"}]};
+        if(a > 225 && a <= 315) return {z:"Low", m:[{n:"Trigger Jerking", p:"High"},{n:"Anticipation", p:"Med"},{n:"Flinching", p:"Low"}]};
+        return {z:"Right", m:[{n:"Finger Tip Pressure", p:"High"},{n:"Thumb Pressure", p:"Med"},{n:"Cheek Weld", p:"Low"}]};
     }
 
     function refreshList() {
         const list = document.getElementById('shotList');
         list.innerHTML = persistentShots.slice().reverse().map((s, i) => `
-            <div class="card"><h4>Shot #${persistentShots.length-i}</h4></div>
+            <div class="card">
+                <h4>Shot #${persistentShots.length-i}: ${s.d.z} Zone</h4>
+                ${s.d.m.map(m => `<div class="mistake"><span>${m.n}</span><span class="prob" style="color:${m.p==='High'?'#ff3b30':'#00ff00'}">${m.p}</span></div>`).join('')}
+            </div>
         `).join('');
     }
 
     function drawOverlay(H) {
         let ctx = document.getElementById('overlayCanvas').getContext('2d');
-        ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-        persistentShots.forEach((s) => {
+        ctx.clearRect(0,0,640,480);
+        persistentShots.forEach((s, idx) => {
             let p = cv.matFromArray(3, 1, cv.CV_64F, [s.x, s.y, 1.0]);
             let dP = new cv.Mat(); cv.gemm(H, p, 1, new cv.Mat(), 0, dP);
             let x = dP.data64F[0]/dP.data64F[2], y = dP.data64F[1]/dP.data64F[2];
-            ctx.beginPath(); ctx.arc(x,y,12,0,6.28); ctx.fillStyle="rgba(0,255,0,0.7)"; ctx.fill();
+            ctx.beginPath(); ctx.arc(x,y,10,0,6.28); ctx.fillStyle="rgba(0,255,0,0.7)"; ctx.fill();
             ctx.strokeStyle="white"; ctx.stroke();
+            ctx.fillStyle="white"; ctx.font="11px sans-serif"; ctx.fillText("#"+(idx+1), x+14, y);
             p.delete(); dP.delete();
         });
     }
 
-    function toggleTracking() { isTracking = !isTracking; if(isTracking) { trackingLoop(); document.getElementById('status').innerText = "Session Active."; } }
+    function toggleTracking() { isTracking = !isTracking; if(isTracking) trackingLoop(); }
 </script>
 </body>
 </html>
