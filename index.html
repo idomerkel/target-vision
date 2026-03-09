@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Target Analysis - Align Fixed</title>
+    <title>Target Analysis - High Speed Build</title>
     <script>
         var Module = { onRuntimeInitialized: function() { onOpenCvReady(); } };
     </script>
@@ -24,9 +24,9 @@
 <body>
 
     <div class="main">
-        <h2 style="margin:0 0 10px 0; font-size: 18px;">Diagnostic Vision Engine</h2>
-        <p id="status">Loading WASM...</p>
-        <div class="video-box" id="vbox">
+        <h2 style="margin:0 0 10px 0; font-size: 18px;">Diagnostic Vision Engine (Fast)</h2>
+        <p id="status">WASM Loading...</p>
+        <div class="video-box">
             <video id="webcam" autoplay playsinline muted></video>
             <canvas id="overlayCanvas" class="overlay"></canvas>
         </div>
@@ -48,7 +48,9 @@
 <script>
     let isTracking = false;
     let orb = null, matcher = null, refKP = null, refDesc = null, refGray = null;
-    let cropSize = 0, targetRadius = 0, persistentShots = [], candidates = [], blacklist = [];
+    let persistentShots = [], candidates = [], blacklist = [];
+    let frameCount = 0; // Performance counter
+    
     const PROXIMITY = 15.0, REQ_FRAMES = 5; 
 
     function onOpenCvReady() {
@@ -61,7 +63,6 @@
                 const v = document.getElementById('webcam');
                 v.srcObject = s; 
                 v.onloadedmetadata = () => {
-                    // Sync internal canvas size to the ACTUAL hardware video size
                     const ov = document.getElementById('overlayCanvas');
                     ov.width = v.videoWidth;
                     ov.height = v.videoHeight;
@@ -76,7 +77,6 @@
         let cvs = document.getElementById('calcCanvas');
         let ctx = cvs.getContext('2d');
         let v = document.getElementById('webcam');
-        // Mirroring fix so analysis zones match what you see
         ctx.save();
         ctx.translate(640, 0);
         ctx.scale(-1, 1);
@@ -87,7 +87,8 @@
 
     function setBaseline() {
         if(!orb) { 
-            orb = new cv.ORB(1500); matcher = new cv.BFMatcher(cv.NORM_HAMMING, true); 
+            orb = new cv.ORB(1000); // Optimized feature count
+            matcher = new cv.BFMatcher(cv.NORM_HAMMING, true); 
             refKP = new cv.KeyPointVector(); refDesc = new cv.Mat(); 
         }
         let frame = grab();
@@ -128,6 +129,14 @@
 
     function trackingLoop() {
         if(!isTracking) return;
+        
+        // PERFORMANCE BOOST: Only process every 3rd frame
+        frameCount++;
+        if (frameCount % 3 !== 0) {
+            requestAnimationFrame(trackingLoop);
+            return;
+        }
+
         let frame = grab();
         let grayLive = new cv.Mat(), liveKP = new cv.KeyPointVector(), liveDesc = new cv.Mat(), matches = new cv.DMatchVector();
         try {
@@ -151,11 +160,13 @@
                         let diff = new cv.Mat(), thresh = new cv.Mat();
                         cv.absdiff(refBlur, warpedBlur, diff);
                         cv.threshold(diff, thresh, 40, 255, cv.THRESH_BINARY);
+                        
                         let liveMask = cv.Mat.zeros(refGray.rows, refGray.cols, cv.CV_8UC1);
                         cv.circle(liveMask, new cv.Point(refGray.cols/2, refGray.rows/2), targetRadius - 15, new cv.Scalar(255), -1);
                         let maskedThresh = new cv.Mat();
                         thresh.copyTo(maskedThresh, liveMask);
                         cv.imshow('debugCanvas', maskedThresh);
+
                         let contours = new cv.MatVector(), hier = new cv.Mat();
                         cv.findContours(maskedThresh, contours, hier, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
                         let currentHoles = [];
@@ -218,7 +229,7 @@
         list.innerHTML = persistentShots.slice().reverse().map((s, i) => `
             <div class="card">
                 <h4>Shot #${persistentShots.length-i}: ${s.d.z} Zone</h4>
-                ${s.d.m.map(m => `<div class="mistake"><span>${m.n}</span><span class="prob" style="color:${m.p==='High'?'#ff3b30':'#00ff00'}">${m.p}</span></div>`).join('')}
+                ${s.d.m.map(m => `<div class="mistake"><span>${m.n}</span><span class="prob" style="color:#00ff00">${m.p}</span></div>`).join('')}
             </div>
         `).join('');
     }
@@ -229,11 +240,7 @@
         persistentShots.forEach((s, idx) => {
             let p = cv.matFromArray(3, 1, cv.CV_64F, [s.x, s.y, 1.0]);
             let dP = new cv.Mat(); cv.gemm(H, p, 1, new cv.Mat(), 0, dP);
-            
-            // MATH CORRECTION: Mapping the mirrored internal coordinates back to the display canvas
-            let x = dP.data64F[0]/dP.data64F[2];
-            let y = dP.data64F[1]/dP.data64F[2];
-            
+            let x = dP.data64F[0]/dP.data64F[2], y = dP.data64F[1]/dP.data64F[2];
             ctx.beginPath(); ctx.arc(x,y,10,0,6.28); ctx.fillStyle="rgba(0,255,0,0.7)"; ctx.fill();
             ctx.strokeStyle="white"; ctx.stroke();
             ctx.fillStyle="white"; ctx.font="11px sans-serif"; ctx.fillText("#"+(idx+1), x+14, y);
