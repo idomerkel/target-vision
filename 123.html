@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Mobile Diagnostic Hub</title>
+    <script async src="https://docs.opencv.org/4.8.0/opencv.js" onload="cvReady()"></script>
+    <style>
+        body { font-family: sans-serif; background: #000; color: #fff; margin: 0; padding: 0; overflow: hidden; display: flex; flex-direction: column; height: 100vh; }
+        #debugLog { background: #111; color: #0f0; font-family: monospace; font-size: 10px; padding: 10px; height: 80px; overflow-y: auto; border-bottom: 1px solid #333; }
+        .video-container { flex: 1; position: relative; background: #000; display: flex; align-items: center; justify-content: center; }
+        video { width: 100%; height: 100%; object-fit: cover; }
+        canvas.overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; }
+        .controls { background: #1a1a1a; padding: 15px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        button { padding: 18px; border: none; border-radius: 10px; background: #ff3b30; color: #fff; font-weight: bold; font-size: 14px; box-shadow: 0 4px #990000; }
+        button:active { transform: translateY(2px); box-shadow: 0 2px #990000; }
+        button:disabled { background: #333; box-shadow: none; color: #666; }
+        .full { grid-column: span 2; }
+    </style>
+</head>
+<body>
+
+<div id="debugLog">System: Initializing...</div>
+
+<div class="video-container">
+    <video id="webcam" autoplay playsinline muted></video>
+    <canvas id="overlayCanvas" class="overlay"></canvas>
+</div>
+
+<div class="controls">
+    <button id="btnCam" class="full" onclick="forceCameraInit()">TAP TO START CAMERA</button>
+    <button id="btnBase" onclick="setBaseline()" disabled>1. LOCK TARGET</button>
+    <button id="btnTrack" onclick="toggleTracking()" disabled>2. START SESSION</button>
+</div>
+
+<script>
+    function log(msg, isError = false) {
+        const div = document.getElementById('debugLog');
+        div.innerHTML += `<br><span style="color:${isError?'#ff3b30':'#0f0'}">${msg}</span>`;
+        div.scrollTop = div.scrollHeight;
+    }
+
+    function cvReady() { log("OpenCV.js Engine: Loaded."); }
+
+    async function forceCameraInit() {
+        log("Checking security context...");
+        
+        // Android Security Check
+        if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost') {
+            log("SECURITY REJECTION: Browser blocked camera on insecure HTTP.", true);
+            alert("Android requires HTTPS. Use GitHub Pages or a local server flag.");
+            return;
+        }
+
+        log("Requesting 'environment' camera...");
+        const constraints = {
+            video: { 
+                facingMode: { exact: "environment" }, // Forces rear camera
+                width: { ideal: 640 }, 
+                height: { ideal: 480 } 
+            }
+        };
+
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia(constraints);
+            const video = document.getElementById('webcam');
+            video.srcObject = stream;
+            
+            video.onloadedmetadata = () => {
+                log("Stream Active: 640x480 resolution.");
+                document.getElementById('btnCam').style.display = 'none';
+                document.getElementById('btnBase').disabled = false;
+                
+                // Sync overlay
+                const ov = document.getElementById('overlayCanvas');
+                ov.width = video.videoWidth;
+                ov.height = video.videoHeight;
+            };
+        } catch (err) {
+            log(`CAMERA ERROR: ${err.name} - ${err.message}`, true);
+            
+            // If rear camera fails, try the default camera
+            if (err.name === "OverconstrainedError" || err.name === "NotFoundError") {
+                log("Retrying with default camera...");
+                initDefaultCamera();
+            }
+        }
+    }
+
+    async function initDefaultCamera() {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+            document.getElementById('webcam').srcObject = stream;
+            document.getElementById('btnBase').disabled = false;
+            document.getElementById('btnCam').style.display = 'none';
+        } catch (e) {
+            log("Total hardware failure. Check Android system settings.", true);
+        }
+    }
+
+    // Insert your baseline and tracking logic here...
+</script>
+</body>
+</html>
