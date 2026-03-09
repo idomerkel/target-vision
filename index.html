@@ -3,31 +3,27 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Target Hub - Zero False Build</title>
+    <title>Precision Target Hub</title>
     <script>
         var Module = { onRuntimeInitialized: function() { onOpenCvReady(); } };
     </script>
     <script async src="https://docs.opencv.org/4.8.0/opencv.js"></script>
     <style>
-        * { box-sizing: border-box; }
         body { font-family: sans-serif; background: #000; color: #fff; margin: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
-        #status { background: #00ff00; color: #000; font-size: 11px; font-weight: bold; text-align: center; padding: 5px; flex-shrink: 0; }
-        .video-wrap { position: relative; width: 100%; height: 45vh; background: #111; overflow: hidden; }
+        #status { background: #00ff00; color: #000; font-size: 11px; font-weight: bold; text-align: center; padding: 5px; }
+        .video-wrap { position: relative; flex: 1; background: #111; overflow: hidden; display: flex; align-items: center; justify-content: center; }
         video#webcam { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
-        canvas.overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; transform: scaleX(-1); }
-        #debugCanvas { width: 100px; height: 75px; border: 1px solid #555; position: absolute; bottom: 5px; right: 5px; background: #000; }
-        .ui { flex: 1; background: #1a1a1a; display: flex; flex-direction: column; }
-        .btns { padding: 15px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; background: #222; }
-        button { padding: 18px 5px; border: none; border-radius: 10px; background: #ff3b30; color: #fff; font-weight: bold; font-size: 13px; }
-        button#btnReset { background: #555; grid-column: span 2; margin-top: 5px; }
-        button:disabled { background: #333; color: #888; }
-        .list { padding: 15px; flex: 1; overflow-y: auto; }
-        .card { background: #333; padding: 12px; border-left: 4px solid #ff3b30; border-radius: 6px; margin-bottom: 10px; font-size: 13px; }
+        canvas.overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; transform: scaleX(-1); z-index: 10; }
+        #debugCanvas { width: 120px; height: 90px; border: 1px solid #555; position: absolute; bottom: 10px; right: 10px; background: #000; z-index: 20; }
+        .controls { background: #1a1a1a; padding: 15px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; border-top: 1px solid #333; }
+        button { padding: 18px; border: none; border-radius: 10px; background: #ff3b30; color: #fff; font-weight: bold; }
+        button:disabled { background: #333; color: #666; }
+        .sidebar { height: 100px; background: #0a0a0a; overflow-y: auto; padding: 10px; font-size: 12px; }
     </style>
 </head>
 <body>
 
-<div id="status">WASM ENGINE LOADING...</div>
+<div id="status">INITIALIZING...</div>
 
 <div class="video-wrap">
     <video id="webcam" autoplay playsinline muted></video>
@@ -35,13 +31,11 @@
     <canvas id="debugCanvas"></canvas>
 </div>
 
-<div class="ui">
-    <div class="btns">
-        <button id="btnBase" onclick="setBaseline()" disabled>1. LOCK TARGET</button>
-        <button id="btnTrack" onclick="toggleTracking()" disabled>2. START SESSION</button>
-        <button id="btnReset" onclick="resetShots()">CLEAR ALL SHOTS</button>
-    </div>
-    <div class="list" id="shotList"></div>
+<div class="sidebar" id="shotList">Logs: Idle</div>
+
+<div class="controls">
+    <button id="btnBase" onclick="setBaseline()" disabled>1. LOCK BASE</button>
+    <button id="btnTrack" onclick="toggleTracking()" disabled>2. START SESSION</button>
 </div>
 
 <canvas id="calcCanvas" style="display:none;"></canvas>
@@ -61,9 +55,10 @@
             v.srcObject = s;
             v.onloadedmetadata = () => {
                 const ov = document.getElementById('overlayCanvas');
-                ov.width = v.videoWidth; ov.height = v.videoHeight;
+                ov.width = v.videoWidth;
+                ov.height = v.videoHeight;
                 document.getElementById('btnBase').disabled = false;
-                document.getElementById('status').innerText = "CAMERA READY - ENSURE GOOD LIGHT";
+                document.getElementById('status').innerText = "CAMERA ACTIVE";
             };
         });
     }
@@ -79,16 +74,8 @@
         return cv.imread(cvs);
     }
 
-    function resetShots() {
-        persistentShots = [];
-        candidates = [];
-        document.getElementById('shotList').innerHTML = "";
-        let ov = document.getElementById('overlayCanvas');
-        ov.getContext('2d').clearRect(0,0,ov.width,ov.height);
-    }
-
     function setBaseline() {
-        if(!orb) { orb = new cv.ORB(700); matcher = new cv.BFMatcher(cv.NORM_HAMMING, true); refKP = new cv.KeyPointVector(); refDesc = new cv.Mat(); }
+        if(!orb) { orb = new cv.ORB(1200); matcher = new cv.BFMatcher(cv.NORM_HAMMING, true); refKP = new cv.KeyPointVector(); refDesc = new cv.Mat(); }
         let frame = grab();
         let gray = new cv.Mat(), thresh = new cv.Mat();
         cv.cvtColor(frame, gray, cv.COLOR_RGBA2GRAY);
@@ -98,11 +85,11 @@
         let best = null, maxA = 0;
         for(let i=0; i<contours.size(); i++) {
             let a = cv.contourArea(contours.get(i));
-            if(a > 1000 && a > maxA) { maxA = a; best = cv.minEnclosingCircle(contours.get(i)); }
+            if(a > 1200 && a > maxA) { maxA = a; best = cv.minEnclosingCircle(contours.get(i)); }
         }
-        if(!best) { alert("Target not seen!"); frame.delete(); return; }
+        if(!best) { alert("Center target!"); frame.delete(); return; }
         let radius = Math.round(best.radius);
-        let crop = radius * 2 + 40;
+        let crop = radius * 2 + 50;
         let rect = new cv.Rect(Math.max(0, best.center.x - crop/2), Math.max(0, best.center.y - crop/2), Math.min(frame.cols - (best.center.x - crop/2), crop), Math.min(frame.rows - (best.center.y - crop/2), crop));
         let roi = frame.roi(rect);
         if(refGray) refGray.delete();
@@ -113,14 +100,14 @@
         document.getElementById('debugCanvas').width = roi.cols;
         document.getElementById('debugCanvas').height = roi.rows;
         document.getElementById('btnTrack').disabled = false;
-        document.getElementById('status').innerText = "BASE SET";
+        document.getElementById('status').innerText = "LOCKED";
         frame.delete(); gray.delete(); thresh.delete(); contours.delete(); hierarchy.delete(); mask.delete(); roi.delete();
     }
 
     function trackingLoop() {
         if(!isTracking) return;
         frameSkip++;
-        if (frameSkip % 4 !== 0) { requestAnimationFrame(trackingLoop); return; }
+        if (frameSkip % 2 !== 0) { requestAnimationFrame(trackingLoop); return; }
 
         let frame = grab();
         let grayLive = new cv.Mat(), liveKP = new cv.KeyPointVector(), liveDesc = new cv.Mat(), matches = new cv.DMatchVector();
@@ -131,25 +118,24 @@
                 matcher.match(refDesc, liveDesc, matches);
                 let good = [];
                 for(let i=0; i<matches.size(); i++) { if(matches.get(i).distance < 45) good.push(matches.get(i)); }
-                if(good.length >= 8) {
+                if(good.length >= 10) {
                     let srcP = [], dstP = [];
                     for(let m of good) { srcP.push(refKP.get(m.queryIdx).pt.x, refKP.get(m.queryIdx).pt.y); dstP.push(liveKP.get(m.trainIdx).pt.x, liveKP.get(m.trainIdx).pt.y); }
                     let matSrc = cv.matFromArray(good.length, 1, cv.CV_32FC2, srcP);
                     let matDst = cv.matFromArray(good.length, 1, cv.CV_32FC2, dstP);
-                    let H = cv.findHomography(matSrc, matDst, cv.RANSAC, 5.0);
+                    let H = cv.findHomography(matSrc, matDst, cv.RANSAC, 3.0); // Stricter RANSAC
+
                     if(!H.empty()) {
                         let invH = new cv.Mat(); cv.invert(H, invH, cv.DECOMP_LU);
                         let warped = new cv.Mat(); cv.warpPerspective(grayLive, warped, invH, new cv.Size(refGray.cols, refGray.rows));
                         
                         let diff = new cv.Mat(), thresh = new cv.Mat();
                         cv.absdiff(refGray, warped, diff);
-                        cv.threshold(diff, thresh, 55, 255, cv.THRESH_BINARY); // AGGRESSIVE THRESHOLD
                         
-                        // NOISE ERASE STEP
-                        let M = cv.Mat.ones(2, 2, cv.CV_8U);
-                        cv.erode(thresh, thresh, M);
-                        cv.dilate(thresh, thresh, M);
-
+                        // NEW MOBILE NOISE SUPPRESSION
+                        cv.medianBlur(diff, diff, 3);
+                        cv.threshold(diff, thresh, 55, 255, cv.THRESH_BINARY);
+                        
                         cv.imshow('debugCanvas', thresh);
 
                         let contours = new cv.MatVector(), hier = new cv.Mat();
@@ -157,14 +143,14 @@
                         let holes = [];
                         for(let i=0; i<contours.size(); i++) {
                             let cnt = contours.get(i), area = cv.contourArea(cnt);
-                            if(area > 20 && area < 500) { // IGNORE TINY SPECKS
+                            if(area > 15 && area < 400) {
                                 let Mm = cv.moments(cnt);
                                 holes.push({x: Mm.m10/Mm.m00, y: Mm.m01/Mm.m00});
                             }
                         }
                         processShots(holes);
                         drawOverlay(H);
-                        invH.delete(); warped.delete(); diff.delete(); thresh.delete(); contours.delete(); hier.delete(); H.delete(); M.delete();
+                        invH.delete(); warped.delete(); diff.delete(); thresh.delete(); contours.delete(); hier.delete(); H.delete();
                     }
                     matSrc.delete(); matDst.delete();
                 }
@@ -179,9 +165,9 @@
             let c = candidates.find(can => Math.hypot(can.x-h.x, can.y-h.y) < 15);
             if(c) { 
                 c.f++; 
-                if(c.f >= 3) { // REQUIRES 3 CONSECUTIVE HITS
+                if(c.f >= 4) { // Consensus filter
                     persistentShots.push({x:h.x, y:h.y});
-                    document.getElementById('shotList').innerHTML = `<div class="card">SHOT #${persistentShots.length}</div>` + document.getElementById('shotList').innerHTML;
+                    document.getElementById('shotList').innerHTML = `DETECTED: SHOT ${persistentShots.length}<br>` + document.getElementById('shotList').innerHTML;
                     candidates = candidates.filter(can => can !== c);
                 }
             } else candidates.push({x:h.x, y:h.y, f:1});
@@ -202,7 +188,7 @@
         });
     }
 
-    function toggleTracking() { isTracking = !isTracking; if(isTracking) { trackingLoop(); document.getElementById('status').innerText = "SESSION LIVE"; } }
+    function toggleTracking() { isTracking = !isTracking; if(isTracking) { trackingLoop(); document.getElementById('status').innerText = "LIVE"; } }
 </script>
 </body>
 </html>
